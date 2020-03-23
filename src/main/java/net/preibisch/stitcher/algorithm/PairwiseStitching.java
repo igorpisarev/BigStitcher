@@ -8,12 +8,12 @@
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
@@ -45,10 +45,10 @@ import net.imglib2.IterableInterval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.RealInterval;
 import net.imglib2.RealLocalizable;
+import net.imglib2.algorithm.phasecorrelation.PeakFilter;
 import net.imglib2.algorithm.phasecorrelation.PhaseCorrelation2;
 import net.imglib2.algorithm.phasecorrelation.PhaseCorrelationPeak2;
 import net.imglib2.img.array.ArrayImgFactory;
-import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.realtransform.AffineGet;
 import net.imglib2.realtransform.AffineTransform;
 import net.imglib2.realtransform.AffineTransform3D;
@@ -64,7 +64,6 @@ import net.imglib2.util.Util;
 import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.PairwiseStitchingResult;
-import net.preibisch.mvrecon.process.export.DisplayImage;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.fusion.ImagePortion;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
@@ -86,7 +85,7 @@ public class PairwiseStitching
 		// TODO: allow arbitrary pre-registration
 
 		// check if we have singleton dimensions
-		boolean[] singletonDims = new boolean[input1.numDimensions()];
+		final boolean[] singletonDims = new boolean[input1.numDimensions()];
 		for ( int d = 0; d < input1.numDimensions(); ++d )
 			singletonDims[d] = !( input1.dimension( d ) > 1 && input2.dimension( d ) > 1 );
 		// TODO: should we consider cases where a dimension is singleton in one
@@ -147,10 +146,10 @@ public class PairwiseStitching
 		}
 
 		// do the alignment
-		Align< T > lkAlign = new Align< T >( Views.zeroMin( Views.interval( img1, interval1 ) ),
+		final Align< T > lkAlign = new Align< >( Views.zeroMin( Views.interval( img1, interval1 ) ),
 				new ArrayImgFactory< FloatType >(), params.getWarpFunctionInstance( img1.numDimensions() ) );
 
-		AffineTransform res = lkAlign.align( Views.zeroMin( Views.interval( img2, interval2 ) ), params.maxNumIterations,
+		final AffineTransform res = lkAlign.align( Views.zeroMin( Views.interval( img2, interval2 ) ), params.maxNumIterations,
 				params.minParameterChange );
 
 		if (lkAlign.didConverge())
@@ -159,7 +158,7 @@ public class PairwiseStitching
 			IOFunctions.println("(" + new Date( System.currentTimeMillis() ) + ") registration did not converge" );
 
 		final int nFull =  input1.numDimensions();
-		AffineTransform resFull = new AffineTransform( nFull );
+		final AffineTransform resFull = new AffineTransform( nFull );
 
 		// increase dimensionality of transform if necessary
 		int dReducedDims = 0;
@@ -207,10 +206,11 @@ public class PairwiseStitching
 
 		return new ValuePair<>( resFull, lkAlign.didConverge() ? lkAlign.getCurrentCorrelation(  Views.zeroMin( Views.interval( img2, interval2 ) ) ) : 0.0 );
 	}
+
 	/**
 	 * The absolute shift of input2 relative to after PCM input1 (without t1 and
 	 * t2 - they just help to speed it up)
-	 * 
+	 *
 
 	 * @param input1 - zero-min interval, starting at (0,0,...)
 	 * @param input2 - zero-min interval, starting at (0,0,...)
@@ -227,9 +227,33 @@ public class PairwiseStitching
 			final TranslationGet t1, final TranslationGet t2, final PairwiseStitchingParameters params,
 			final ExecutorService service)
 	{
+		return getShift(input1, input2, t1, t2, params, service, null);
+	}
+
+	/**
+	 * The absolute shift of input2 relative to after PCM input1 (without t1 and
+	 * t2 - they just help to speed it up)
+	 *
+
+	 * @param input1 - zero-min interval, starting at (0,0,...)
+	 * @param input2 - zero-min interval, starting at (0,0,...)
+	 * @param t1 - translation of input1
+	 * @param t2 - translation of input2
+	 * @param params - stitching parameters
+	 * @param service - executor service to use
+	 * @param peakFilter - for accepting or rejecting phase correlation peaks based on their location
+	 * @param <T> pixel type input1
+	 * @param <S> pixel type input2
+	 * @return pair of shift vector and cross correlation coefficient or null if no shift could be determined
+	 */
+	public static <T extends RealType< T >, S extends RealType< S >> Pair< Translation, Double > getShift(
+			final RandomAccessibleInterval< T > input1, final RandomAccessibleInterval< S > input2,
+			final TranslationGet t1, final TranslationGet t2, final PairwiseStitchingParameters params,
+			final ExecutorService service, final PeakFilter peakFilter)
+	{
 
 		// check if we have singleton dimensions
-		boolean[] singletonDims = new boolean[input1.numDimensions()];
+		final boolean[] singletonDims = new boolean[input1.numDimensions()];
 		for ( int d = 0; d < input1.numDimensions(); ++d )
 			singletonDims[d] = !(input1.dimension( d ) > 1 && input2.dimension( d ) > 1);
 		// TODO: should we consider cases where a dimension is singleton in one image but not the other?
@@ -329,7 +353,8 @@ public class PairwiseStitching
 
 		final PhaseCorrelationPeak2 shiftPeak = PhaseCorrelation2.getShift( pcm,
 				Views.zeroMin( Views.interval( img1, interval1 ) ), Views.zeroMin( Views.interval( img2, interval2 ) ),
-				params.peaksToCheck, minOverlap, params.doSubpixel, params.interpolateCrossCorrelation, service );
+				params.peaksToCheck, minOverlap, params.doSubpixel, params.interpolateCrossCorrelation,
+				service, peakFilter );
 
 		//System.out.println( "Actual overlap of best shift is: " + shiftPeak.getnPixel() );
 
@@ -359,11 +384,11 @@ public class PairwiseStitching
 				// correct for the int/real coordinate mess
 				final double intervalSubpixelOffset1 = interval1.realMin( d2 ) - localOverlap1.realMin( d2 ); // a_s
 				final double intervalSubpixelOffset2 = interval2.realMin( d2 ) - localOverlap2.realMin( d2 ); // b_s
-	
+
 				final double localRasterShift = shift.getDoublePosition( d2 ); // d'
 				System.out.println( intervalSubpixelOffset1 + "," + intervalSubpixelOffset2 + "," + localRasterShift );
 				final double localRelativeShift = localRasterShift - ( intervalSubpixelOffset2 - intervalSubpixelOffset1 );
-	
+
 				finalShift[d] = localRelativeShift;
 				d2++;
 			}
@@ -389,7 +414,7 @@ public class PairwiseStitching
 	public static float min( final RandomAccessibleInterval< FloatType > img, final ExecutorService taskExecutor )
 	{
 		final IterableInterval< FloatType > iterable = Views.iterable( img );
-		
+
 		// split up into many parts for multithreading
 		final Vector< ImagePortion > portions = FusionTools.divideIntoPortions( iterable.size() );
 
@@ -398,7 +423,7 @@ public class PairwiseStitching
 
 		for ( final ImagePortion portion : portions )
 		{
-			tasks.add( new Callable< Float >() 
+			tasks.add( new Callable< Float >()
 					{
 						@Override
 						public Float call() throws Exception
@@ -441,7 +466,7 @@ public class PairwiseStitching
 	public static void adjustPCM( final RandomAccessibleInterval< FloatType > img, final float min, final ExecutorService taskExecutor )
 	{
 		final IterableInterval< FloatType > iterable = Views.iterable( img );
-		
+
 		// split up into many parts for multithreading
 		final Vector< ImagePortion > portions = FusionTools.divideIntoPortions( iterable.size() );
 
@@ -450,7 +475,7 @@ public class PairwiseStitching
 
 		for ( final ImagePortion portion : portions )
 		{
-			tasks.add( new Callable< Void >() 
+			tasks.add( new Callable< Void >()
 					{
 						@Override
 						public Void call() throws Exception
@@ -484,29 +509,29 @@ public class PairwiseStitching
 			final Map< C, RandomAccessibleInterval< T > > rais, final Map< C, TranslationGet > translations,
 			final LucasKanadeParameters params, final ExecutorService service)
 	{
-		List< C > indexes = new ArrayList< >( rais.keySet() );
+		final List< C > indexes = new ArrayList< >( rais.keySet() );
 		Collections.sort( indexes );
 
-		List< PairwiseStitchingResult< C > > result = new ArrayList< >();
+		final List< PairwiseStitchingResult< C > > result = new ArrayList< >();
 
 		// got through all pairs with index1 < index2
 		for ( int i = 0; i < indexes.size(); i++ )
 		{
 			for ( int j = i + 1; j < indexes.size(); j++ )
 			{
-				Pair< AffineTransform, Double > resT = getShiftLucasKanade( rais.get( indexes.get( i ) ), rais.get( indexes.get( j ) ),
+				final Pair< AffineTransform, Double > resT = getShiftLucasKanade( rais.get( indexes.get( i ) ), rais.get( indexes.get( j ) ),
 						translations.get( indexes.get( i ) ), translations.get( indexes.get( j ) ), params, service );
 
 				if ( resT != null )
 				{
-					Set<C> setA = new HashSet<>();
+					final Set<C> setA = new HashSet<>();
 					setA.add( indexes.get( i ) );
-					Set<C> setB = new HashSet<>();
+					final Set<C> setB = new HashSet<>();
 					setA.add( indexes.get( j ) );
-					Pair< Group<C>, Group<C> > key = new ValuePair<>(new Group<>(setA), new Group<>(setB));
-					result.add( new PairwiseStitchingResult< C >( key, null, resT.getA() , resT.getB(), 0.0 ) );
+					final Pair< Group<C>, Group<C> > key = new ValuePair<>(new Group<>(setA), new Group<>(setB));
+					result.add( new PairwiseStitchingResult< >( key, null, resT.getA() , resT.getB(), 0.0 ) );
 				}
-				
+
 			}
 		}
 
@@ -518,10 +543,10 @@ public class PairwiseStitching
 			final Map< C, RandomAccessibleInterval< T > > rais, final Map< C, TranslationGet > translations,
 			final PairwiseStitchingParameters params, final ExecutorService service)
 	{
-		List< C > indexes = new ArrayList< >( rais.keySet() );
+		final List< C > indexes = new ArrayList< >( rais.keySet() );
 		Collections.sort( indexes );
 
-		List< PairwiseStitchingResult< C > > result = new ArrayList< >();
+		final List< PairwiseStitchingResult< C > > result = new ArrayList< >();
 
 		// got through all pairs with index1 < index2
 		for ( int i = 0; i < indexes.size(); i++ )
@@ -533,12 +558,12 @@ public class PairwiseStitching
 
 				if ( resT != null )
 				{
-					Set<C> setA = new HashSet<>();
+					final Set<C> setA = new HashSet<>();
 					setA.add( indexes.get( i ) );
-					Set<C> setB = new HashSet<>();
+					final Set<C> setB = new HashSet<>();
 					setA.add( indexes.get( j ) );
-					Pair< Group<C>, Group<C> > key = new ValuePair<>(new Group<>(setA), new Group<>(setB));
-					result.add( new PairwiseStitchingResult< C >( key, null, resT.getA(), resT.getB(), 0.0 ) );
+					final Pair< Group<C>, Group<C> > key = new ValuePair<>(new Group<>(setA), new Group<>(setB));
+					result.add( new PairwiseStitchingResult< >( key, null, resT.getA(), resT.getB(), 0.0 ) );
 				}
 			}
 		}
@@ -547,47 +572,47 @@ public class PairwiseStitching
 
 	}
 
-	public static void main(String[] args)
+	public static void main(final String[] args)
 	{
 		final AffineTransform3D m = new AffineTransform3D();
-		double scale = 200;
+		final double scale = 200;
 		m.set( scale, 0.0f, 0.0f, 0.0f, 0.0f, scale, 0.0f, 0.0f, 0.0f, 0.0f, scale, 0.0f );
 
 		final AffineTransform3D mShift = new AffineTransform3D();
-		double shift = 100;
+		final double shift = 100;
 		mShift.set( 1.0f, 0.0f, 0.0f, shift, 0.0f, 1.0f, 0.0f, shift, 0.0f, 0.0f, 1.0f, shift );
 		final AffineTransform3D mShift2 = new AffineTransform3D();
-		double shift2x = 1200;
-		double shift2y = 300;
+		final double shift2x = 1200;
+		final double shift2y = 300;
 		mShift2.set( 1.0f, 0.0f, 0.0f, shift2x, 0.0f, 1.0f, 0.0f, shift2y, 0.0f, 0.0f, 1.0f, 0.0f );
 
 		final AffineTransform3D mShift3 = new AffineTransform3D();
-		double shift3x = 500;
-		double shift3y = 1300;
+		final double shift3x = 500;
+		final double shift3y = 1300;
 		mShift3.set( 1.0f, 0.0f, 0.0f, shift3x, 0.0f, 1.0f, 0.0f, shift3y, 0.0f, 0.0f, 1.0f, 0.0f );
 
-		AffineTransform3D m2 = m.copy();
-		AffineTransform3D m3 = m.copy();
+		final AffineTransform3D m2 = m.copy();
+		final AffineTransform3D m3 = m.copy();
 		m.preConcatenate( mShift );
 		m2.preConcatenate( mShift2 );
 		m3.preConcatenate( mShift3 );
 
-		Interval start = new FinalInterval( new long[] { -399, -399, 0 }, new long[] { 0, 0, 1 } );
-		List< Interval > intervals = FractalSpimDataGenerator.generateTileList( start, 7, 6, 0.2f );
+		final Interval start = new FinalInterval( new long[] { -399, -399, 0 }, new long[] { 0, 0, 1 } );
+		final List< Interval > intervals = FractalSpimDataGenerator.generateTileList( start, 7, 6, 0.2f );
 
-		List< Interval > falseStarts = FractalSpimDataGenerator.generateTileList( start, 7, 6, 0.30f );
+		final List< Interval > falseStarts = FractalSpimDataGenerator.generateTileList( start, 7, 6, 0.30f );
 
-		FractalSpimDataGenerator fsdg = new FractalSpimDataGenerator( 3 );
+		final FractalSpimDataGenerator fsdg = new FractalSpimDataGenerator( 3 );
 		fsdg.addFractal( m );
 		fsdg.addFractal( m2 );
 		fsdg.addFractal( m3 );
 
-		Map< Integer, RandomAccessibleInterval< LongType > > rais = new HashMap< >();
-		Map< Integer, TranslationGet > tr = new HashMap< >();
+		final Map< Integer, RandomAccessibleInterval< LongType > > rais = new HashMap< >();
+		final Map< Integer, TranslationGet > tr = new HashMap< >();
 
-		List< TranslationGet > tileTranslations = FractalSpimDataGenerator.getTileTranslations( falseStarts );
+		final List< TranslationGet > tileTranslations = FractalSpimDataGenerator.getTileTranslations( falseStarts );
 
-		FractalImgLoader imgLoader = (FractalImgLoader) fsdg.generateSpimData( intervals ).getSequenceDescription()
+		final FractalImgLoader imgLoader = (FractalImgLoader) fsdg.generateSpimData( intervals ).getSequenceDescription()
 				.getImgLoader();
 		for ( int i = 0; i < intervals.size(); i++ )
 		{
@@ -595,19 +620,19 @@ public class PairwiseStitching
 			tr.put( i, tileTranslations.get( i ) );
 		}
 
-		List< PairwiseStitchingResult< Integer > > pairwiseShifts = getPairwiseShifts( rais, tr,
+		final List< PairwiseStitchingResult< Integer > > pairwiseShifts = getPairwiseShifts( rais, tr,
 				new PairwiseStitchingParameters(),
 				Executors.newFixedThreadPool( Runtime.getRuntime().availableProcessors() ) );
 
-		
-		Map< Integer, AffineGet > collect = tr.entrySet().stream().collect( Collectors.toMap( e -> 
-			e.getKey(), e -> {AffineTransform3D res = new AffineTransform3D(); res.set( e.getValue().getRowPackedCopy() ); return res; } ));
-		
+
+		final Map< Integer, AffineGet > collect = tr.entrySet().stream().collect( Collectors.toMap( e ->
+			e.getKey(), e -> {final AffineTransform3D res = new AffineTransform3D(); res.set( e.getValue().getRowPackedCopy() ); return res; } ));
+
 		// TODO: replace with new globalOpt code
-		
+
 //		Map< Set<Integer>, AffineGet > globalOptimization = GlobalTileOptimization.twoRoundGlobalOptimization( new TranslationModel3D(),
-//				rais.keySet().stream().map( ( c ) -> {Set<Integer> s = new HashSet<>(); s.add( c ); return s;}).collect( Collectors.toList() ), 
-//				null, 
+//				rais.keySet().stream().map( ( c ) -> {Set<Integer> s = new HashSet<>(); s.add( c ); return s;}).collect( Collectors.toList() ),
+//				null,
 //				collect,
 //				pairwiseShifts, new GlobalOptimizationParameters() );
 //

@@ -28,7 +28,7 @@
 			<distribution>repo</distribution>
 		</license>
 	</licenses>
-
+	
 	<developers>
 		<developer>
 			<id>StephanPreibisch</id>
@@ -104,6 +104,9 @@
 
 		<!-- NB: Deploy releases to the ImageJ Maven repository. -->
 		<releaseProfiles>deploy-to-imagej</releaseProfiles>
+		
+		<enforcer.skip>true</enforcer.skip>
+		<scijava.jvm.version>1.8</scijava.jvm.version>
 	</properties>
 
 	<repositories>
